@@ -1,0 +1,82 @@
+name: Wekelijks Vastgoedrapport
+
+on:
+  schedule:
+    # Elke maandag om 07:00 CET (= 06:00 UTC zomer / 07:00 UTC winter)
+    - cron: '0 6 * * 1'
+  workflow_dispatch:  # Ook handmatig te starten via GitHub UI
+
+jobs:
+  scrape-and-report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Installeer dependencies
+        run: |
+          pip install requests beautifulsoup4 openpyxl lxml \
+                      playwright fake-useragent tenacity
+
+      - name: Installeer Playwright browsers
+        run: playwright install chromium --with-deps
+
+      - name: Voer scraper uit
+        run: python main.py --live
+        env:
+          SCRAPE_MODE: live
+          MAX_PAGES: 5
+
+      - name: Genereer datum-string
+        id: date
+        run: echo "DATE=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+      - name: Upload rapport als artifact (90 dagen bewaard)
+        uses: actions/upload-artifact@v4
+        with:
+          name: vastgoed-rapport-${{ steps.date.outputs.DATE }}
+          path: |
+            output/vastgoed_rapport_*.xlsx
+            output/vastgoed_dashboard_*.html
+          retention-days: 90
+
+      - name: Stuur rapport via e-mail (Outlook)
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp-mail.outlook.com
+          server_port: 587
+          secure: false
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "📊 Vastgoedrapport — ${{ steps.date.outputs.DATE }}"
+          to: ${{ secrets.MAIL_TO }}
+          from: Vastgoed Rapport <${{ secrets.MAIL_USERNAME }}>
+          body: |
+            Beste,
+
+            Het wekelijks vastgoedmarktrapport voor Antwerpen, Vlaams-Brabant
+            en Limburg is klaar.
+
+            Bijgevoegd: Excel-rapport met alle listings van deze week.
+
+            Het interactieve HTML-dashboard is beschikbaar via:
+            GitHub > Actions > meest recente run > Artifacts (90 dagen bewaard)
+
+            Groeten,
+            Vastgoed Rapport Pro
+          attachments: output/vastgoed_rapport_${{ steps.date.outputs.DATE }}.xlsx
+
+      - name: Sla rapporten op in 'reports' branch
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "Wekelijks rapport ${{ steps.date.outputs.DATE }}"
+          file_pattern: output/*.xlsx output/*.html
+          branch: reports
+          create_branch: true
